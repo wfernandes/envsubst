@@ -1,6 +1,7 @@
 package parse
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -484,5 +485,54 @@ func TestParse(t *testing.T) {
 		if diff := cmp.Diff(test.Node, got.Root); diff != "" {
 			t.Errorf(diff)
 		}
+	}
+}
+
+func TestParseFuncError(t *testing.T) {
+	tests := []struct {
+		name               string
+		text               string
+		expectedLineNumber int
+		expectedContext    string
+		expectedErr        string
+	}{
+		{
+			name: "when unable to find param name",
+			text: `line 1
+hello ${$}
+welcome ${FOO=drone}`,
+			expectedLineNumber: 2,
+			expectedErr:        "unable to parse variable name",
+		},
+		{
+			name:               "when unable to find closing bracket",
+			text:               `welcome ${FOO`,
+			expectedLineNumber: 1,
+			expectedErr:        "missing closing brace",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse(tt.text)
+			if err == nil {
+				t.Error("expected an error, got nothing")
+				return
+			}
+			var ep *ErrParse
+			if !errors.As(err, &ep) {
+				t.Errorf("expected ErrParse, got %T", err)
+				return
+			}
+			if ep.lineNumber != tt.expectedLineNumber {
+				t.Errorf("expected parse error on line %d, got %d", tt.expectedLineNumber, ep.lineNumber)
+				return
+			}
+			if len(tt.expectedErr) > 0 {
+				if ep.err.Error() != tt.expectedErr {
+					t.Errorf("expected error with value %q, got %q", tt.expectedErr, ep.err)
+				}
+			}
+		})
 	}
 }

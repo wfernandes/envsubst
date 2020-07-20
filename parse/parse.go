@@ -2,14 +2,30 @@ package parse
 
 import (
 	"errors"
+	"fmt"
+	"log"
 )
 
 // ErrBadSubstitution represents a substitution parsing error.
 var ErrBadSubstitution = errors.New("bad substitution")
 
+type ErrParse struct {
+	lineNumber int
+	context    string
+	err        error
+}
+
+func (e *ErrParse) Error() string {
+	if e.lineNumber > 0 {
+		return fmt.Sprintf("%s on line %d\n\tLook for:\"...%s...\"\n", e.err, e.lineNumber, e.context)
+	}
+	return fmt.Sprintf("%s\n\tLook for:\"...%s...\"\n", e.err, e.context)
+}
+
 // Tree is the representation of a single parsed SQL statement.
 type Tree struct {
-	Root Node
+	Root    Node
+	Context string
 
 	// Parsing only; cleared after parse.
 	scanner *scanner
@@ -65,6 +81,7 @@ func (t *Tree) parseAny() (Node, error) {
 		return newListNode(left, right), nil
 	}
 
+	log.Println("Got a bad thing")
 	return nil, ErrBadSubstitution
 }
 
@@ -78,11 +95,15 @@ func (t *Tree) parseFunc() (Node, error) {
 	t.scanner.accept = acceptIdent
 	t.scanner.mode = scanIdent
 
-	switch t.scanner.scan() {
+	switch tok := t.scanner.scan(); tok {
 	case tokenIdent:
 		name = t.scanner.string()
 	default:
-		return nil, ErrBadSubstitution
+		return nil, &ErrParse{
+			lineNumber: t.scanner.line,
+			context:    t.scanner.context(),
+			err:        fmt.Errorf("unable to parse variable name"),
+		}
 	}
 
 	switch t.scanner.peek() {
@@ -106,7 +127,11 @@ func (t *Tree) parseFunc() (Node, error) {
 	case tokenRbrack:
 		return newFuncNode(name), nil
 	default:
-		return nil, ErrBadSubstitution
+		return nil, &ErrParse{
+			lineNumber: t.scanner.line,
+			context:    t.scanner.context(),
+			err:        errors.New("missing closing brace"),
+		}
 	}
 }
 
@@ -126,12 +151,13 @@ func (t *Tree) parseParam(accept acceptFunc, mode byte) (Node, error) {
 			t.scanner.string(),
 		), nil
 	default:
-		return nil, ErrBadSubstitution
+		return nil, errors.New("unable to parse substitution")
 	}
 }
 
 // parse either a default or substring substitution function.
 func (t *Tree) parseDefaultOrSubstr(name string) (Node, error) {
+	// TODO: Do we need this additional read/unread
 	t.scanner.read()
 	r := t.scanner.peek()
 	t.scanner.unread()
@@ -287,6 +313,7 @@ func (t *Tree) parseDefaultFunc(name string) (Node, error) {
 	node := new(FuncNode)
 	node.Param = name
 
+	println("---default func", name)
 	t.scanner.accept = acceptDefaultFunc
 	if t.scanner.peek() == '=' {
 		t.scanner.accept = acceptOneEqual
@@ -295,7 +322,9 @@ func (t *Tree) parseDefaultFunc(name string) (Node, error) {
 	switch t.scanner.scan() {
 	case tokenIdent:
 		node.Name = t.scanner.string()
+		println("--ident found", node.Name, t.scanner.line)
 	default:
+		log.Printf("unable to parse default func, unexpected %s\n", t.scanner.context())
 		return nil, ErrBadSubstitution
 	}
 
@@ -308,7 +337,12 @@ func (t *Tree) parseDefaultFunc(name string) (Node, error) {
 		}
 		param, err := t.parseParam(acceptNotClosing, scanIdent)
 		if err != nil {
-			return nil, err
+			return nil, &ErrParse{
+				lineNumber: t.scanner.line,
+				context:    t.scanner.context(),
+				err:        err,
+			}
+
 		}
 
 		node.Args = append(node.Args, param)

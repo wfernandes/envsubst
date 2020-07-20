@@ -45,6 +45,7 @@ type scanner struct {
 	start int
 	width int
 	mode  byte
+	line  int
 
 	accept acceptFunc
 }
@@ -55,11 +56,15 @@ func (s *scanner) init(buf string) {
 	s.pos = 0
 	s.start = 0
 	s.width = 0
+	s.line = 1
 	s.accept = nil
 }
 
 // read returns the next unicode character. It returns eof at
 // the end of the string buffer.
+// NOTE: Maybe we can store the context on the scanner as a windowing operation
+// with certain before and after characters so that it can be retrieved for
+// printing out in error cases
 func (s *scanner) read() rune {
 	if s.pos >= len(s.buf) {
 		s.width = 0
@@ -68,6 +73,10 @@ func (s *scanner) read() rune {
 	r, w := utf8.DecodeRuneInString(s.buf[s.pos:])
 	s.width = w
 	s.pos += s.width
+	if r == '\n' {
+		println("found new line")
+		s.line++
+	}
 	return r
 }
 
@@ -87,7 +96,13 @@ func (s *scanner) skip() {
 // advancing the scanner. It returns eof if the scanner's position
 // is at the last character of the source.
 func (s *scanner) peek() rune {
+	ln := s.line
 	r := s.read()
+	// if we increment the line number on read, make sure we decrement it by
+	// the same amount since we are only peeking.
+	if s.line != ln {
+		s.line -= (s.line - ln)
+	}
 	s.unread()
 	return r
 }
@@ -98,8 +113,25 @@ func (s *scanner) string() string {
 	return s.buf[s.start:s.pos]
 }
 
+// context returns the context around the most recently scanned token. Valid
+// after calling scan(). The context length is 10 characters.
+func (s *scanner) context() string {
+	contextLen := 10
+	st := s.start
+	p := s.pos
+	if s.start-contextLen > 0 {
+		st = s.start - contextLen
+	}
+	if s.pos+contextLen < len(s.buf) {
+		p = s.pos + contextLen
+	}
+	return s.buf[st:p]
+}
+
 // scan reads the next token or Unicode character from source and
 // returns it. It returns EOF at the end of the source.
+// TODO: scan may have to return the token and the rune, so that we can print
+// out the rune for error msging
 func (s *scanner) scan() token {
 	s.start = s.pos
 	r := s.read()
@@ -113,6 +145,8 @@ func (s *scanner) scan() token {
 	case s.scanIdent(r):
 		return tokenIdent
 	}
+	// print the rune that was read
+	// log.Printf("RUNE BEFORE ILLEGAL: %c\n", r)
 	return tokenIllegal
 }
 

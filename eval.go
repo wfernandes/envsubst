@@ -1,6 +1,8 @@
 package envsubst
 
-import "os"
+import (
+	"os"
+)
 
 // Eval replaces ${var} in the string based on the mapping function.
 func Eval(s string, mapping func(string) string) (string, error) {
